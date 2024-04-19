@@ -12,8 +12,13 @@ as described in the [DETR paper](https://arxiv.org/pdf/2005.12872.pdf).
 ![](resources/pedestrian_1_tokens_explanation.png)
 ![](resources/pedestrian_2_tokens_explanation.png)
 
-## TO DO:
+## Propagating the Token Relevance Map through the Backbone
 
-- Propagating the relevance of the tokens through the backbone, enabling the creation of saliency maps at input 
-space resolution, offering deeper insights into patterns identified by the model within input images 
-for specific detections.
+- Using [`captum`](https://captum.ai/) to employ different gradient-based methods to propagate the token relevance map through the backbone of the model.
+
+![](resources/detection_tokens_rel_map.png)
+- The following images show the attribution maps on the input image pixels wrt particular neurons of the most relevant tokens. 
+- For example the first image shows the attribution map for the neuron which belongs to the token in spatial position (5, 37) (row, column) on position 0 along the embedding dimension.
+
+![](resources/neuron_5_37_0.png)
+![](resources/neuron_16_38_0.png)
