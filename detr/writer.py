@@ -14,11 +14,14 @@ def drawDetections(image: Image.Image, detections: List, copy: bool = False):
     image = image.copy() if copy else image
     draw = ImageDraw.Draw(image)
     
-    for score, category, (xmin, ymin, xmax, ymax) in detections:
-        name, color = category, tuple(np.random.randint(0, 255, 3))
-        draw.rectangle([(xmin, ymin), (xmax, ymax)], outline=color, width=5)
-        text = f'{name} {score:0.2f}'
-        draw.text((xmin, ymin), text, fill='white', font=ImageFont.truetype("arial.ttf", size=20))
+    for d in detections:
+        x1, y1, x2, y2 = d['box']
+        color = tuple(np.random.randint(0, 255, 3))
+        label, score = d['label'], d['score']
+        text = f'{label} {score:0.2f}'
+        
+        draw.rectangle([(x1, y1), (x2, y2)], outline=color, width=5)
+        draw.text((x1, y1), text, fill='white', font=ImageFont.truetype("arial.ttf", size=20))
     
     return image
 
@@ -60,14 +63,17 @@ class TensorboardWriter:
         plt.tight_layout()
         self.writer.add_figure(tag=tag, figure=plt.gcf(), global_step=global_step)
         plt.close()
+        
     
     def __call__(self, image, exp_img):
         prefix = 'Writing in Tensorboard: '
         pba = tqdm(exp_img['explanations'], desc=prefix, leave=False)
         
-        for step, (exp_info, detection) in enumerate(pba):
+        for step, exp in enumerate(pba):
+            exp_info = exp['explanation']
+            detection = exp['detection']
             query_idx = exp_info['query_idx']
-            query_tag = f'Query_{query_idx}_{detection[1]}'
+            query_tag = f'Query_{query_idx}_' + detection['label']
             rel_map = exp_info['relevance_map']
             
             pba.set_description(prefix + f'Detection {step} | Detection + Relevance Map...')
@@ -84,8 +90,7 @@ class TensorboardWriter:
             num_heads = exp_img['outputs']['encoder_attentions'][0].shape[0]
             
             for t_i in token_idx:
-                i, j = t_i // w, t_i % w
-                i, j = i.item(), j.item()
+                i, j = (t_i // w).item(), (t_i % w).item()
                 token_tag = query_tag + f"/Token_{i}_{j}"
                 
                 for block, encoder_block_attn in enumerate(exp_img['outputs']['encoder_attentions']):

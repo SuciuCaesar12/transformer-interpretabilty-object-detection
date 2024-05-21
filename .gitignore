@@ -1,4 +1,5 @@
 __pycache__/
 .idea/
 
-resources/checkpoints/
+resources/artifacts/
+explanations/

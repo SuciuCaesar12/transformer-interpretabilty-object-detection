@@ -1,7 +1,7 @@
-from detr.processor import DetrProcessor, DetrPostProcessor
+from detr.processor import DetrProcessor
 from detr.attention import DetrAttentionModuleExplainer
 from detr.writer import TensorboardWriter
-from typing import Dict, List
+from typing import Dict, List, Union
 from pathlib import Path
 from PIL import  Image
 
@@ -10,40 +10,27 @@ import torch
 import transformers as tr
 
 
-def filter_by_thresh(outputs, no_object_id: int, threshold: float = 0.5):
-    is_keep = lambda v, i: v > threshold and i != no_object_id
-    logits = outputs['logits'].squeeze(0)
-    device = logits.device
-    
-    vs, idx = logits.softmax(-1).max(-1)
-    q_idx = torch.tensor([is_keep(v, i) for v, i in zip(vs, idx)]).nonzero()
-    q_idx = q_idx.squeeze(-1).to(device)
-    
-    return q_idx
-
-
-def sort_by_area(outputs):
-    ws = outputs['pred_boxes'][0, :, 2]
-    hs = outputs['pred_boxes'][0, :, 3]
-    return (ws * hs).sort(descending=True)[1]
-
-
 class DetrExplainer:
     
-    def __init__(self, model: tr.DetrForObjectDetection,
+    
+    def __init__(self, 
+                 model: tr.DetrForObjectDetection,
                  processor: tr.DetrImageProcessor, 
+                 id2label: List[Dict[int, str]],
+                 no_object_id: int,
                  device: str = 'cpu'):
         self.model = model
-        self.device = device
         self.model.requires_grad_(True)
         self.model.model.freeze_backbone()
+        self.id2label = id2label
+        self.no_object_id = no_object_id
+        self.device = device
         
-        self.processor = DetrProcessor(processor)
-        self.post_processor = DetrPostProcessor(processor)
+        self.processor = DetrProcessor(processor, self.id2label)
         self.attn_module_explainer = DetrAttentionModuleExplainer(model, self.device)
+        
     
-    
-    def _inference(self, inputs: Dict[str, torch.Tensor], no_object_id: int, threshold: float):
+    def _inference(self, inputs: Dict[str, torch.Tensor]):
         conv_features = []
         conv_hook = self.model.model.backbone.register_forward_hook(
             lambda m, i, o: conv_features.append(o))
@@ -56,64 +43,82 @@ class DetrExplainer:
             output_hidden_states=True, 
             return_dict=True)
         
-        # filter detections by confidence threshold
-        raw_logits = outputs['logits'].clone().squeeze(0)
-        q_idx = filter_by_thresh(outputs, no_object_id, threshold)
+        self.raw_logits = outputs['logits'].squeeze(0).clone()
+        scores, label_ids = self.raw_logits.softmax(-1).max(-1)
+        include_label_ids = self.include_label_ids.unsqueeze(0).repeat(label_ids.shape[0], 1)
+    
+        q_idx =\
+            (label_ids != self.no_object_id) &\
+            (scores > self.threshold) &\
+            torch.any(label_ids.unsqueeze(-1) == include_label_ids, dim=-1)
+        q_idx = q_idx.nonzero().squeeze(-1)
+        
         outputs['logits'] = outputs['logits'][:, q_idx, :]
         outputs['pred_boxes'] = outputs['pred_boxes'][:, q_idx, :]
+
+        ws = outputs['pred_boxes'][0, :, 2]
+        hs = outputs['pred_boxes'][0, :, 3]
+        q_idx_temp = (ws * hs).sort(descending=True)[1]
         
-        # sort detections by area
-        q_idx_temp = sort_by_area(outputs)
         q_idx = q_idx[q_idx_temp]
         outputs['logits'] = outputs['logits'][:, q_idx_temp, :]
         outputs['pred_boxes'] = outputs['pred_boxes'][:, q_idx_temp, :]
+        
+        self.q_idx = q_idx
+        self.outputs = outputs
         
         # extract the last convolutional feature map
         # used for reshaping the relevance maps
         [(conv_feature_maps, _), ] = conv_features
         conv_feature, _ = conv_feature_maps[-1]
-        conv_feature = conv_feature.squeeze(0)
+        self.conv_feature = conv_feature.squeeze(0)
         conv_hook.remove()
-        
-        return q_idx[:3], outputs, conv_feature, raw_logits
         
 
     def explain(self,
                 image: Image.Image, 
-                no_object_id: int, 
-                categories: List[str],
+                include_labels: Union[List[str], str] = 'all', 
                 output_dir: Path = None,
                 threshold: float = 0.5):
         # clear memory
         torch.cuda.empty_cache()
         gc.collect()
         
+        if isinstance(include_labels, str):
+            if include_labels == 'all':
+                include_labels = list(self.id2label.values())
+            else:
+                raise ValueError('include_labels must be a list of strings or has the value "all"')
+        
+        assert all([c in self.id2label.values() for c in include_labels]),\
+            'All names in include_labels must be in id2label dictionary'
+        
+        self.threshold = threshold
+        self.include_label_ids = torch.Tensor([
+            id for id, label in self.id2label.items() if label in include_labels
+        ]).to(self.device)
+        
         # transform image in the format Detr uses
-        inputs = self.processor(image)
+        inputs = self.processor.preprocess(image)
         
         # move inputs and model to device
         inputs['pixel_values'] = inputs['pixel_values'].to(self.device)
         inputs['pixel_mask'] = inputs['pixel_mask'].to(self.device)
         self.model = self.model.to(self.device)
         
-        # create tensorboard writer
-        if output_dir is not None:  
-            writer = TensorboardWriter(output_dir)
-        
         # perform inference + filter detections
-        q_idx, outputs, conv_feature, orig_logits = self._inference(
-            inputs, no_object_id, threshold)
+        self._inference(inputs)
         
         # generate relevance maps for each detection
         explanations = self.attn_module_explainer.generate_rel_maps(
-            q_idx, 
-            orig_logits, 
-            outputs['encoder_attentions'], 
-            outputs['decoder_attentions'], 
-            outputs['cross_attentions'])
+            q_idx=self.q_idx, 
+            logits=self.raw_logits, 
+            encoder_attentions=self.outputs['encoder_attentions'], 
+            decoder_attentions=self.outputs['decoder_attentions'], 
+            cross_attentions=self.outputs['cross_attentions'])
         
         # reshape relevance maps
-        h, w = conv_feature.shape[1:]
+        h, w = self.conv_feature.shape[1:]
         for exp in explanations:
             exp['relevance_map'] = exp['relevance_map'].reshape(h, w)
 
@@ -122,18 +127,21 @@ class DetrExplainer:
         inputs['pixel_mask'] = inputs['pixel_mask'].to('cpu')
         
         # decode outputs
-        decoded_outputs = self.post_processor(
-            outputs=outputs,
-            target_sizes=[inputs['labels'][0]['orig_size']],
-            categories=categories
+        decoded_outputs = self.processor.postprocess(
+            outputs=self.outputs,
+            target_sizes=[inputs['labels'][0]['orig_size']]
         )
+        
         exp_img = {
-            'explanations': list(zip(explanations, decoded_outputs['detections'])),
+            'explanations': [{
+                'explanation': e,
+                'detection': d,
+            } for e, d in zip(explanations, decoded_outputs['detections'])],
             'outputs': decoded_outputs['outputs'],
         }
         
         # write to tensorboard the explanations for each detection
         if output_dir is not None:
-            writer(image, exp_img)
+            TensorboardWriter(output_dir)(image, exp_img)
         
         return exp_img
