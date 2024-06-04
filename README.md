@@ -11,7 +11,7 @@ for object detection tasks.
 - Visualization are presented in `Tensorboard`. 
 - Here we can see the relevance maps for the two detections of cats in the image:
 
-<p align="left">
+<p align="center">
   <img src="./resources/results/cat/cat_left.png" width="39%" />
   <img src="./resources/results/cat/cat_right.png" width="39%" /> 
 </p>
