@@ -97,7 +97,7 @@ class DetrExplainer:
             Output of the explainer.
         '''
         _, w = exp_out.outputs.conv_feature_shape
-        pba = tqdm(exp_out.explanations, desc='Writing to tensorboard', leave=False)
+        pba = tqdm(exp_out.explanations, desc='Writing to tensorboard', leave=False, disable=not self.verbose)
         
         for e in pba:
             pba.set_postfix_str("Detection + Relevance Map")
@@ -135,6 +135,7 @@ class DetrExplainer:
                 output_dir: Path = None,
                 save_explanations: bool = True,
                 write_tensorboard: bool = True,
+                verbose: bool = False,
                 threshold: float = 0.5) -> base.DetrExplainerOutput:
         '''
         Explains the predicted detections of the model on the image. It generates relevance maps for each detection.
@@ -178,6 +179,7 @@ class DetrExplainer:
         if save_explanations or write_tensorboard:
             assert output_dir is not None, 'output_dir must be provided if save_explanations or write_tensorboard is True'
         
+        self.verbose = verbose
         self.threshold = threshold
         self.include_label_ids = torch.Tensor([
             id for id, label in self.model.id2label().items() if label in include_labels

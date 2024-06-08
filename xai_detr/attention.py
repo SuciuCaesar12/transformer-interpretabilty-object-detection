@@ -114,7 +114,8 @@ class DetrAttentionModuleExplainer:
     def generate_rel_maps(self, 
                           q_idx: torch.Tensor, 
                           logits: torch.Tensor, 
-                          outputs: base.DetrOutput) -> List[base.ExplanationItem]:
+                          outputs: base.DetrOutput,
+                          verbose: bool = False) -> List[base.ExplanationItem]:
         '''
         Generate relevance maps for the queries.
         
@@ -145,7 +146,7 @@ class DetrAttentionModuleExplainer:
         h, w = outputs.conv_feature_shape
         logits.requires_grad_(True)
         
-        pba = tqdm(q_idx, desc="Detection", leave=False)
+        pba = tqdm(q_idx, desc="Detection", leave=False, disable=not verbose)
         explanations: List[base.ExplanationItem] = []
         
         for step, q_i in enumerate(q_idx):

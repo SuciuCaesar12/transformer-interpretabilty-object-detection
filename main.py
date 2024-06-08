@@ -1,4 +1,4 @@
-from detr.explainer import DetrExplainer
+from xai_detr.explainer import DetrExplainer
 from pathlib import Path
 from PIL import Image
 

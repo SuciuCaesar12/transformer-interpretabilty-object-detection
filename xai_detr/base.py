@@ -121,12 +121,14 @@ class DetrOutput:
                  encoder_attentions: Tuple[torch.FloatTensor],
                  decoder_attentions: Tuple[torch.FloatTensor],
                  cross_attentions: Tuple[torch.FloatTensor],
-                 conv_feature_shape: Tuple[int, int]
+                 conv_feature_shape: Tuple[int, int],
+                 pred_masks: torch.FloatTensor = None
                  ) -> None:
         
         
         self.logits = logits
         self.pred_boxes = pred_boxes
+        self.pred_masks = pred_masks
         self.encoder_attentions = encoder_attentions
         self.decoder_attentions = decoder_attentions
         self.cross_attentions = cross_attentions
@@ -135,6 +137,7 @@ class DetrOutput:
     def to(self, device: torch.device):
         self.logits = self.logits.to(device)
         self.pred_boxes = self.pred_boxes.to(device)
+        self.pred_masks = self.pred_masks.to(device) if self.pred_masks is not None else None
         self.encoder_attentions = tuple(att.to(device) for att in self.encoder_attentions)
         self.decoder_attentions = tuple(att.to(device) for att in self.decoder_attentions)
         self.cross_attentions = tuple(att.to(device) for att in self.cross_attentions)
@@ -144,6 +147,7 @@ class DetrOutput:
     def detach(self):
         self.logits = self.logits.detach()
         self.pred_boxes = self.pred_boxes.detach()
+        self.pred_masks = self.pred_masks.detach() if self.pred_masks is not None else None
         self.encoder_attentions = tuple(att.detach() for att in self.encoder_attentions)
         self.decoder_attentions = tuple(att.detach() for att in self.decoder_attentions)
         self.cross_attentions = tuple(att.detach() for att in self.cross_attentions)
@@ -153,9 +157,20 @@ class DetrOutput:
     def squeeze(self, dim: int = 0):
         self.logits = self.logits.squeeze(dim)
         self.pred_boxes = self.pred_boxes.squeeze(dim)
+        self.pred_masks = self.pred_masks.squeeze(dim) if self.pred_masks is not None else None
         self.encoder_attentions = tuple(att.squeeze(dim) for att in self.encoder_attentions)
         self.decoder_attentions = tuple(att.squeeze(dim) for att in self.decoder_attentions)
         self.cross_attentions = tuple(att.squeeze(dim) for att in self.cross_attentions)
+        
+        return self
+    
+    def unsqueeze(self, dim: int = 0):
+        self.logits = self.logits.unsqueeze(dim)
+        self.pred_boxes = self.pred_boxes.unsqueeze(dim)
+        self.pred_masks = self.pred_masks.unsqueeze(dim) if self.pred_masks is not None else None
+        self.encoder_attentions = tuple(att.unsqueeze(dim) for att in self.encoder_attentions)
+        self.decoder_attentions = tuple(att.unsqueeze(dim) for att in self.decoder_attentions)
+        self.cross_attentions = tuple(att.unsqueeze(dim) for att in self.cross_attentions)
         
         return self
 
