@@ -2,19 +2,43 @@ import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
 
+import coco.api as cocoAPI
+import coco.detr as cocoDETR
+
+import xai_detr.base as base
+from xai_detr.explainer import DetrExplainer
+
+from panopticapi.evaluation import pq_compute
+
 import torch
 import json
 import cv2
 import numpy as np
-import xai_detr.base as base
-
-from coco.api import CocoPanopticAPI
-from coco.detr import build
-from xai_detr.explainer import DetrExplainer
-
 from tqdm import tqdm
 from PIL import Image
-from panopticapi.evaluation import pq_compute
+from dataclasses import dataclass
+
+
+PATH_ROOT = Path(r'./coco/data')
+PATH_ANNOTATIONS = PATH_ROOT / 'panoptic_annotations_trainval2017/annotations/'
+
+
+explainer = DetrExplainer(
+    model=cocoDETR.build(),
+    device=torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+)
+coco_api = cocoAPI.CocoPanopticAPI(
+    root=PATH_ROOT,
+    annFile=PATH_ANNOTATIONS / 'panoptic_val2017.json',
+    masksDir=PATH_ANNOTATIONS / 'panoptic_val2017'
+)
+
+@dataclass
+class DetrSegmentationOutput:
+    
+    logits: torch.Tensor
+    pred_boxes: torch.Tensor
+    pred_masks: torch.Tensor
 
 
 class CocoIDGenerator:
@@ -23,7 +47,7 @@ class CocoIDGenerator:
         self.image_id = 0
     
     def __call__(self, instance_id: int, category_id: int):
-       return int(self.image_id * 1e4 + instance_id * 1e2 + category_id)
+       return int(self.image_id * 1e4 + category_id * 1e2 + instance_id)
    
     def update(self):
         self.image_id += 1
@@ -49,23 +73,34 @@ def to_mask(rel_map: torch.Tensor) -> torch.Tensor:
     return torch.tensor(mask).float()
 
 
-def get_masks(explainer_output: base.DetrExplainerOutput) -> torch.Tensor:
-    relevance_maps = [exp.relevance_map for exp in explainer_output.explanations]
-    pred_masks = [to_mask(rel_map) for rel_map in relevance_maps]
-    
-    if pred_masks == []:
+def to_masks(rel_maps: torch.Tensor) -> torch.Tensor:
+    masks = [to_mask(rel_map) for rel_map in rel_maps]
+    if masks == []:
         return torch.tensor([])
-    return torch.stack(pred_masks, dim=0)
+    return torch.stack(masks, dim=0)
+
+
+def get_masks_from_rms(explainer_output: base.DetrExplainerOutput):
+    return to_masks(
+        [exp.relevance_map for exp in explainer_output.explanations]
+    )
+
+
+def get_masks_from_cross_attentions(explainer_output: base.DetrExplainerOutput):
+    cross_attention = explainer_output.outputs.cross_attentions[-1]
+    h, w = explainer_output.outputs.conv_feature_shape
+    q_idx = [exp.detection.query_index for exp in explainer_output.explanations]
+    
+    return to_masks(
+        [cross_attention[:, q_i, :].mean(dim=0).reshape(h, w) for q_i in q_idx]
+    )
 
 
 def inference_panoptic(
-    image_id: int, 
-    cocoAPI: CocoPanopticAPI,
-    explainer: DetrExplainer,
+    image_id: int,
     threshold: float = 0.9
 ):
-    image = cocoAPI.loadImgs([image_id])[0]
-    h, w = image.size
+    image = coco_api.loadImgs([image_id])[0]
     
     explainer_output = explainer.explain(
         image=image,
@@ -77,24 +112,34 @@ def inference_panoptic(
         threshold=threshold
     )
     
-    pan_outputs = explainer_output.outputs
-    pan_outputs.pred_masks = get_masks(explainer_output)
-    pan_outputs = pan_outputs.unsqueeze(0)
+    # compute masks from relevance maps
+    pred_masks = get_masks_from_rms(explainer_output)
+    # compute masks from cross-attention maps
+    raw_attn_pred_masks = get_masks_from_cross_attentions(explainer_output)
     
-    outputs = explainer.model.processor.post_process_panoptic_segmentation(
-        outputs=pan_outputs,
+    outputs = explainer_output.outputs
+    h, w = image.size
+    
+    [outputs, raw_attn_outputs] = explainer.model.processor.post_process_panoptic_segmentation(
+        outputs=DetrSegmentationOutput(
+            logits=torch.stack([outputs.logits] * 2, dim=0),
+            pred_boxes=torch.stack([outputs.pred_boxes] * 2, dim=0),
+            pred_masks=torch.stack([pred_masks, raw_attn_pred_masks], dim=0)
+        ),
         threshold=0.,
         mask_threshold=0.,
         overlap_mask_area_threshold=0.,
-        target_sizes=[(w, h)]
-    )[0]
+        target_sizes=[(w, h)] * 2
+    )
     
     outputs['image_id'] = image_id
-    return outputs
+    raw_attn_outputs['image_id'] = image_id
+    
+    return outputs, raw_attn_outputs
 
 
-def convert_to_coco_result(predictions, output_dir: Path):
-    Path(output_dir / 'predictions').mkdir(parents=True, exist_ok=True)
+def convert_to_coco_result(predictions, name: str, output_dir: Path):
+    Path(output_dir / name).mkdir(parents=True, exist_ok=True)
     pba = tqdm(predictions, desc='Converting to COCO format', leave=True)
     id_generator = CocoIDGenerator()
     annotations = []
@@ -123,58 +168,40 @@ def convert_to_coco_result(predictions, output_dir: Path):
         
         file_name =  f'{image_id}.png'
         annotation['file_name'] = file_name
-        Image.fromarray(pan_format).save(output_dir / 'predictions' / file_name)
+        Image.fromarray(pan_format).save(output_dir / name / file_name)
         
         annotations.append(annotation)
         id_generator.update()
     
     annotations = {'annotations': annotations}
-    with open(output_dir / 'predictions.json', 'w') as f:
+    with open(output_dir / (name + '.json'), 'w') as f:
         json.dump(annotations, f)
 
 
-def get_explainer():
-    model = build()
-    device = 'cuda'
-    return DetrExplainer(model, device)
-
-
 def main():
-    # Set the paths
-    PATH_ROOT = Path(r'')
-    PATH_ANNOTATIONS = PATH_ROOT / 'panoptic_annotations_trainval2017/annotations/'
-    
-    # Load the COCO API
-    val_coco = CocoPanopticAPI(
-        root=PATH_ROOT,
-        annFile=PATH_ANNOTATIONS / 'panoptic_val2017.json',
-        masksDir=PATH_ANNOTATIONS / 'panoptic_val2017'
-    )
-    pba = tqdm(val_coco.getImageIds(), desc='Inference', leave=True)
-    
-    # Load the explainer
-    explainer = get_explainer()
+    # pba = tqdm(val_coco.getImageIds(), desc='Inference', leave=True)
+    pba = tqdm([397133], desc='Inference', leave=True)
     
     # Perform inference
-    predictions = []
+    predictions, raw_attn_predictions = [], []
     for image_id in pba:
-        outputs = inference_panoptic(image_id, val_coco, explainer, threshold=0.9)
-        predictions.append(outputs)
+        out, ra_out = inference_panoptic(image_id, threshold=0.9)
+        predictions.append(out)
+        raw_attn_predictions.append(ra_out)
     
-    # Convert the predictions to COCO format
-    convert_to_coco_result(predictions, PATH_ANNOTATIONS)
-    
-    # Perform evaluation
-    eval_dict = pq_compute(
-        pred_folder=PATH_ANNOTATIONS / 'predictions',
-        pred_json_file=PATH_ANNOTATIONS / 'predictions.json',
-        gt_folder=PATH_ANNOTATIONS / 'panoptic_val2017',
-        gt_json_file=PATH_ANNOTATIONS / 'panoptic_val2017.json',
-    )
-    
-    # Save the evaluation results
-    with open(PATH_ANNOTATIONS / 'evaluation.json', 'w') as f:
-        json.dump(eval_dict, f)
+    for pred, name in zip([predictions, raw_attn_predictions], ['ours', 'raw_attn']):
+        convert_to_coco_result(pred, name=name, output_dir=PATH_ANNOTATIONS)
+        
+        eval_dict = pq_compute(
+            pred_folder=PATH_ANNOTATIONS / name,
+            pred_json_file=PATH_ANNOTATIONS / f'{name}.json',
+            gt_folder=PATH_ANNOTATIONS / 'panoptic_val2017',
+            # gt_json_file=PATH_ANNOTATIONS / 'panoptic_val2017.json',
+            gt_json_file=PATH_ANNOTATIONS / 'panoptic_val2017_subset.json',
+        )
+        
+        with open(PATH_ANNOTATIONS / f'{name}_evaluation.json', 'w') as f:
+            json.dump(eval_dict, f)
         
 
 if __name__ == '__main__':

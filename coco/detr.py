@@ -124,6 +124,6 @@ def build() -> CocoDetrModule:
         ignore_mismatched_sizes=True)
 
     # Load the feature extractor for pre and post processing
-    processor = tr.DetrFeatureExtractor.from_pretrained("facebook/detr-resnet-50")  
+    processor = tr.DetrImageProcessor.from_pretrained("facebook/detr-resnet-50")  
     
     return CocoDetrModule(model, processor)
