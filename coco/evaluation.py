@@ -102,6 +102,9 @@ def inference_panoptic(
 ):
     image = coco_api.loadImgs([image_id])[0]
     
+    if image.mode == 'L':
+        image = image.convert('RGB')
+    
     explainer_output = explainer.explain(
         image=image,
         include_labels='all',

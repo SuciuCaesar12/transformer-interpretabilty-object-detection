@@ -29,35 +29,6 @@ class DetrAttentionModuleExplainer:
         self.device = device
     
     
-    def _init_snapshots(self):
-        '''
-        Initialize snapshots for the relevance maps.
-        '''
-        self.R_i_i = torch.eye(self.n_i_t).to(self.device)
-        self.R_q_q = torch.eye(self.n_q_t).to(self.device)
-        self.R_q_i = torch.zeros(self.n_q_t, self.n_i_t).to(self.device)
-        
-        self.snapshots: List[base.SnapshotItem] = []
-        self._add_snapshot(tag="init_state")
-    
-    def _add_snapshot(self, tag: str):
-        '''
-        Add a snapshot of the relevance maps.
-        
-        Parameters:
-        ----------
-        
-        tag: str
-            Tag for the snapshot.
-        '''
-        self.snapshots.append(base.SnapshotItem(
-            tag=tag,
-            R_i_i=self.R_i_i.clone().to('cpu'),
-            R_q_q=self.R_q_q.clone().to('cpu'),
-            R_q_i=self.R_q_i.clone().to('cpu')
-        ))
-    
-    
     def _avg_heads(self, grad: torch.Tensor, attn_map: torch.Tensor):
         return (grad * attn_map).clamp(min=0).mean(dim=1)
 
@@ -152,8 +123,10 @@ class DetrAttentionModuleExplainer:
         for step, q_i in enumerate(q_idx):
             prefix = f"Detection {step + 1} / {len(q_idx)}"
             self.model.zero_grad()
-            self._init_snapshots()
             q_i = q_i.item()
+            self.R_i_i = torch.eye(self.n_i_t).to(self.device)
+            self.R_q_q = torch.eye(self.n_q_t).to(self.device)
+            self.R_q_i = torch.zeros(self.n_q_t, self.n_i_t).to(self.device)
             
             # calculate gradients
             pba.set_description(prefix + " - Backward pass")
@@ -161,19 +134,16 @@ class DetrAttentionModuleExplainer:
             
             # update relevance maps for each encoder block
             pba.set_description(prefix + " - Encoder pass")
-            for enc_step, enc_attn in enumerate(outputs.encoder_attentions): 
+            for enc_attn in outputs.encoder_attentions: 
                 self._self_attn_encoder_rel_update(enc_attn)
-                self._add_snapshot(tag=f"encoder_{enc_step}")
             
             # update relevance maps for each decoder block
             pba.set_description(prefix + " Decoder pass")
-            for dec_step, (dec_attn, cross_attn) in enumerate(zip(outputs.decoder_attentions, outputs.cross_attentions)):
+            for dec_attn, cross_attn in zip(outputs.decoder_attentions, outputs.cross_attentions):
                 self._self_attn_decoder_rel_update(dec_attn)
                 self._cross_attn_decoder_rel_update(cross_attn)
-                self._add_snapshot(tag=f"decoder_{dec_step}")
             
             explanations.append(base.ExplanationItem(
-                snapshots=copy.deepcopy(self.snapshots),
                 relevance_map=self.R_q_i[q_i].to('cpu').reshape(h, w)
             ))
         

@@ -8,6 +8,7 @@ from tqdm import tqdm
 
 import gc
 import torch
+import transformers as tr
 import xai_detr.base as base
 
 
@@ -49,6 +50,7 @@ class DetrExplainer:
             self.model.freeze_backbone()
         self.device = device
         
+        self.processor = tr.DetrImageProcessor.from_pretrained("facebook/detr-resnet-50")  
         self.attn_module_explainer = DetrAttentionModuleExplainer(model, self.device)
         
     
@@ -82,6 +84,34 @@ class DetrExplainer:
         
         self.q_idx = q_idx
         self.outputs: base.DetrOutput = outputs
+    
+    def _postprocess(self):
+        decoded_outputs = self.processor.post_process_object_detection(
+            outputs=self.outputs, 
+            threshold=0.0, 
+            target_sizes=[self.original_size])[0]
+        
+        self.outputs = self.outputs.squeeze(0)
+
+        detections = list(zip(
+            decoded_outputs['scores'].tolist(), 
+            decoded_outputs['labels'].tolist(), 
+            decoded_outputs['boxes'].tolist()
+        ))
+
+        if len(detections) > 0:
+            labels = [self.model.id2label()[d[1]] for d in detections]
+            scores, _, boxes = list(zip(*detections))
+            
+            detection_items: List[base.DetectionItem] = []
+            for s, l, b in zip(scores, labels, boxes):
+                detection_items.append(base.DetectionItem(
+                    score=s, label=l, box=b
+                ))
+        else:
+            detection_items = []
+        
+        return detection_items
     
     def _write_on_tensorboard(self, writer: TensorboardWriter, exp_out: base.DetrExplainerOutput):
         '''
@@ -181,12 +211,13 @@ class DetrExplainer:
         
         self.verbose = verbose
         self.threshold = threshold
+        self.original_size = image.size
         self.include_label_ids = torch.Tensor([
             id for id, label in self.model.id2label().items() if label in include_labels
         ]).to(self.device)
         
         # transform image in the format Detr uses
-        inputs, labels = self.model.preprocess(image)
+        inputs = self.model.preprocess(image)
         
         # move inputs and model to device
         inputs = move_to_device(inputs, self.device)
@@ -203,16 +234,11 @@ class DetrExplainer:
         )
 
         # move inputs to cpu to save memory
-        inputs = move_to_device(inputs, device='cpu')
-        self.outputs = self.outputs.detach().to(torch.device('cpu'))
+        inputs = move_to_device(inputs, 'cpu')
+        self.outputs = self.outputs.detach().to('cpu')
         
         # decode outputs
-        detections = self.model.postprocess(
-            outputs=self.outputs,
-            labels=labels
-        )
-        
-        self.outputs = self.outputs.squeeze(0)
+        detections = self._postprocess()
         
         for q_i, e, d in zip(self.q_idx, explanations, detections):
             d.query_index = q_i

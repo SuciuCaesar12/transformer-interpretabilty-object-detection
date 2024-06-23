@@ -1,7 +1,7 @@
 from abc import abstractmethod
 from dataclasses import dataclass
 from PIL import Image
-from typing import Tuple, Dict, List, Any
+from typing import Tuple, Dict, List, Any, Union
 
 import torch
 
@@ -74,13 +74,9 @@ class ExplanationItem:
     
     relevance_map: torch.Tensor
         The relevance map for the detection. It shows the relevance score for each image token.
-        
-    snapshots: List[SnapshotItem]
-        The snapshots of the relevance map.
     '''
     
     relevance_map: torch.FloatTensor
-    snapshots: List[SnapshotItem]
     detection: DetectionItem = None
 
 
@@ -125,7 +121,6 @@ class DetrOutput:
                  pred_masks: torch.FloatTensor = None
                  ) -> None:
         
-        
         self.logits = logits
         self.pred_boxes = pred_boxes
         self.pred_masks = pred_masks
@@ -134,7 +129,8 @@ class DetrOutput:
         self.cross_attentions = cross_attentions
         self.conv_feature_shape = conv_feature_shape
     
-    def to(self, device: torch.device):
+    
+    def to(self, device: Union[torch.device, str]):
         self.logits = self.logits.to(device)
         self.pred_boxes = self.pred_boxes.to(device)
         self.pred_masks = self.pred_masks.to(device) if self.pred_masks is not None else None
@@ -143,6 +139,7 @@ class DetrOutput:
         self.cross_attentions = tuple(att.to(device) for att in self.cross_attentions)
         
         return self
+
 
     def detach(self):
         self.logits = self.logits.detach()
@@ -153,6 +150,7 @@ class DetrOutput:
         self.cross_attentions = tuple(att.detach() for att in self.cross_attentions)
         
         return self
+
 
     def squeeze(self, dim: int = 0):
         self.logits = self.logits.squeeze(dim)
@@ -252,12 +250,7 @@ class AbstractDetrModule:
         
         inputs: Dict[str, torch.Tensor]
             The preprocessed image in the format expected by your DETR model. 
-            This will be the input to the __call__ method.
-        
-        labels: dict
-            Contains information about the original image.
-            You can pass the original image size, the scale of the image, etc. 
-            This information can be used by accessing the labels argument in the postprocess method.
+            This will be the input to the predict method.
         '''
         pass
     
@@ -278,27 +271,6 @@ class AbstractDetrModule:
         '''
         pass
     
-    @abstractmethod
-    def postprocess(self, outputs: DetrOutput, labels: Dict[str, torch.Tensor]) -> List[DetectionItem]:
-        '''
-        Postprocess the output of the DETR model. This method should decode the output of the model into a list of DetectionItem.
-        
-        Parameters
-        ----------
-        
-        outputs: DetrOutput
-            The output of the DETR model.
-            
-        labels: Dict[str, torch.Tensor]
-            The labels of the original image. This is the content of the 'labels' key from the preprocess method.
-        
-        Returns
-        -------
-        
-        detections: List[DetectionItem]
-            The decoded detections from the DETR model.
-        '''
-        pass
     
     @abstractmethod
     def id2label(self) -> Dict[int, str]:

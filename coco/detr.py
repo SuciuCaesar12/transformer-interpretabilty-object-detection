@@ -10,7 +10,7 @@ class CocoDetrModule(base.AbstractDetrModule):
     def __init__(
         self, 
         model: tr.DetrForObjectDetection,
-        processor: tr.DetrFeatureExtractor,
+        processor: tr.DetrImageProcessor,
     ):
         super().__init__()
         self.model = model
@@ -24,7 +24,6 @@ class CocoDetrModule(base.AbstractDetrModule):
             return_tensors="pt")
 
         pixel_values = encoding["pixel_values"]
-        labels = encoding["labels"]
         
         encoding = self.processor.pad(list(pixel_values), return_tensors="pt")
         
@@ -33,11 +32,7 @@ class CocoDetrModule(base.AbstractDetrModule):
             'pixel_mask': encoding['pixel_mask'],
         }
         
-        labels = {
-            'original_size': [labels[0]['orig_size']],
-        }
-        
-        return inputs, labels
+        return inputs
     
     
     def predict(self, inputs: Dict[str, torch.Tensor], **kwargs) -> base.DetrOutput:
@@ -60,33 +55,6 @@ class CocoDetrModule(base.AbstractDetrModule):
             cross_attentions=outputs['cross_attentions'],
             conv_feature_shape=(h, w)
         )
-
-    
-    def postprocess(self, outputs: base.DetrOutput, labels: Dict[str, torch.Tensor]) -> List[base.DetectionItem]:
-        decoded_outputs = self.processor.post_process_object_detection(
-            outputs=outputs, 
-            threshold=0.0, 
-            target_sizes=labels['original_size'])[0]
-
-        detections = list(zip(
-            decoded_outputs['scores'].tolist(), 
-            decoded_outputs['labels'].tolist(), 
-            decoded_outputs['boxes'].tolist()
-        ))
-
-        if len(detections) > 0:
-            labels = [self.id2label()[d[1]] for d in detections]
-            scores, _, boxes = list(zip(*detections))
-            
-            detection_items: List[base.DetectionItem] = []
-            for s, l, b in zip(scores, labels, boxes):
-                detection_items.append(base.DetectionItem(
-                    score=s, label=l, box=b
-                ))
-        else:
-            detection_items = []
-        
-        return detection_items
     
     
     def id2label(self) -> Dict[int, str]:
