@@ -5,9 +5,10 @@ import json
 
 class CocoPanopticAPI:
 
-    def __init__(self, root: Path, annFile: Path, masksDir: Path):
+    def __init__(self, root: Path, annFile: Path, imgDir: Path, masksDir: Path):
         self.root = root
         self.annFile = annFile
+        self.imgDir = imgDir      # relative to root
         self.masksDir = masksDir
 
         if not self.annFile.exists():
@@ -37,16 +38,16 @@ class CocoPanopticAPI:
 
     def loadImgs(self, image_ids):
         images = list(filter(lambda img: img['id'] in image_ids, self.images))
-        return [Image.open(self.root / 'val2017' / 'val2017' / img['file_name'].replace('\\', '/')) for img in images]
+        return [Image.open(self.root / self.imgDir / img['file_name'].replace('\\', '/')) for img in images]
 
     def getImageIds(self):
         return [img['id'] for img in self.images]
 
     def getCategoryById(self, category_id):
         return next((cat for cat in self.categories if cat['id'] == category_id), None)
-
-    def getMask(self, filename):
-        return Image.open(self.masksDir / filename)
+    
+    def getPanGT(self, ann) -> Image.Image:
+        return Image.open(self.masksDir / ann['file_name'])
 
     def id2color(self, category_id):
         cat = self.getCategoryById(category_id)
@@ -54,3 +55,4 @@ class CocoPanopticAPI:
 
     def __getitem__(self, image_id):
         return self.loadImg(image_id), self.loadAnn(image_id)
+

@@ -55,7 +55,7 @@ def plot_attention_maps_block(attn_maps: List[torch.Tensor]) -> plt.Figure:
     for head, attn_map in enumerate(attn_maps):
         plt.subplot(grid_size, grid_size, head + 1)
         plt.imshow(attn_map, cmap='hot')
-        plt.title(f'Head {head}')
+        # plt.title(f'Head {head}')
         plt.axis('off')
     
     plt.tight_layout()
@@ -82,12 +82,12 @@ def plot_detection_and_relevance_map(image: Image.Image, detection: base.Detecti
     
     plt.subplot(2, 1, 1)
     plt.imshow(drawDetections(image, [detection], copy=True), cmap='hot')
-    plt.title('Detection')
+    # plt.title('Detection')
     plt.axis('off')
     
     plt.subplot(2, 1, 2)
     plt.imshow(relevance_map, cmap='hot')
-    plt.title('Relevance Map')
+    # plt.title('Relevance Map')
     plt.axis('off')
     
     plt.tight_layout()

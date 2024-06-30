@@ -82,14 +82,14 @@ class DetrExplainer:
         outputs.logits = outputs.logits[:, q_idx_temp, :]
         outputs.pred_boxes = outputs.pred_boxes[:, q_idx_temp, :]
         
-        self.q_idx = q_idx
+        self.q_idx = q_idx[:2]
         self.outputs: base.DetrOutput = outputs
     
     def _postprocess(self):
         decoded_outputs = self.processor.post_process_object_detection(
             outputs=self.outputs, 
             threshold=0.0, 
-            target_sizes=[self.original_size])[0]
+            target_sizes=[self.original_size[::-1]])[0]
         
         self.outputs = self.outputs.squeeze(0)
 
@@ -113,7 +113,7 @@ class DetrExplainer:
         
         return detection_items
     
-    def _write_on_tensorboard(self, writer: TensorboardWriter, exp_out: base.DetrExplainerOutput):
+    def _write_on_tensorboard(self, image: Image.Image, writer: TensorboardWriter, exp_out: base.DetrExplainerOutput):
         '''
         Write explanations to tensorboard.
         
@@ -132,7 +132,7 @@ class DetrExplainer:
         for e in pba:
             pba.set_postfix_str("Detection + Relevance Map")
             writer.write_detection_and_relevance_map(
-                image=exp_out.image,
+                image=image,
                 explanation=e
             )
             
@@ -163,8 +163,9 @@ class DetrExplainer:
                 image: Image.Image, 
                 include_labels: Union[List[str], str] = 'all', 
                 output_dir: Path = None,
-                save_explanations: bool = True,
-                write_tensorboard: bool = True,
+                save_image: bool = False,
+                save_explanations: bool= False,
+                write_tensorboard: bool = False,
                 verbose: bool = False,
                 threshold: float = 0.5) -> base.DetrExplainerOutput:
         '''
@@ -183,6 +184,9 @@ class DetrExplainer:
         
         output_dir: Path
             Directory to save the explanations.
+            
+        save_image: bool
+            Whether to save the image with the explanations to disk.
         
         save_explanations: bool
             Whether to save the explanations to disk.
@@ -245,15 +249,18 @@ class DetrExplainer:
             e.detection = d
         
         explainer_output = base.DetrExplainerOutput(
-            image=copy.deepcopy(image),
+            image=copy.deepcopy(image) if save_image else None,
             explanations=explanations,
             outputs=self.outputs
         )
         
         # write to tensorboard the explanations for each detection
         if write_tensorboard:
-            writer = TensorboardWriter(output_dir)
-            self._write_on_tensorboard(writer, explainer_output)
+            self._write_on_tensorboard(
+                image, 
+                TensorboardWriter(output_dir), 
+                explainer_output
+            )
         
         # save explanations to disk in a pickle file
         if save_explanations:

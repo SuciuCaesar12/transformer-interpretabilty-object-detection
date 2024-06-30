@@ -36,7 +36,7 @@ class DetrAttentionModuleExplainer:
     def _norm_rel_map(self, rel_map: torch.Tensor):
         h, w = rel_map.shape
         eye = torch.eye(h, w).to(self.device)
-        return F.normalize(rel_map, p=1, dim=0) + eye
+        return F.normalize(rel_map - eye, p=1, dim=0) + eye
         
         
     def _self_attn_encoder_rel_update(self, attn_map: torch.Tensor):

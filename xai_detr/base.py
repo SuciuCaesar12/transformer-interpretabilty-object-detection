@@ -191,9 +191,9 @@ class DetrExplainerOutput:
         The explanations for each detection.
     '''
     
-    image: Image.Image
     outputs: DetrOutput
     explanations: List[ExplanationItem]
+    image: Image.Image = None
     
     def save(self, path: str):
         '''
