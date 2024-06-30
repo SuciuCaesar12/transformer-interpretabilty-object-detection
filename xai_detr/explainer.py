@@ -82,7 +82,7 @@ class DetrExplainer:
         outputs.logits = outputs.logits[:, q_idx_temp, :]
         outputs.pred_boxes = outputs.pred_boxes[:, q_idx_temp, :]
         
-        self.q_idx = q_idx[:2]
+        self.q_idx = q_idx
         self.outputs: base.DetrOutput = outputs
     
     def _postprocess(self):

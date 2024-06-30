@@ -34,12 +34,18 @@ class CocoPanopticAPI:
         return self.loadImgs([image_id])[0]
 
     def loadAnn(self, image_id):
-        return next(filter(lambda ann: ann['image_id'] == image_id, self.annotations), None)
+        return self.loadAnns([image_id])[0]
+    
+    def loadAnns(self, image_ids):
+        return list(filter(lambda ann: ann['image_id'] in image_ids, self.annotations))
 
     def loadImgs(self, image_ids):
         images = list(filter(lambda img: img['id'] in image_ids, self.images))
         return [Image.open(self.root / self.imgDir / img['file_name'].replace('\\', '/')) for img in images]
 
+    def getImgInfo(self, image_ids: list):
+        return list(filter(lambda img: img['id'] in image_ids, self.images))
+    
     def getImageIds(self):
         return [img['id'] for img in self.images]
 

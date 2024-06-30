@@ -87,9 +87,9 @@ class CocoDetrModule(base.AbstractDetrModule):
     
 
 def build() -> CocoDetrModule:
-    model = tr.DetrForObjectDetection.from_pretrained(
-        "facebook/detr-resnet-50", 
-        ignore_mismatched_sizes=True)
+    model = tr.DetrForSegmentation.from_pretrained(
+        "facebook/detr-resnet-50-panoptic",
+        ignore_mismatched_sizes=True).detr
 
     # Load the feature extractor for pre and post processing
     processor = tr.DetrImageProcessor.from_pretrained("facebook/detr-resnet-50")  
